@@ -3,7 +3,7 @@ A Tampermonkey script that will add a button to link to the wowhead talent calcu
 
 # Installation
 1. Install Tampermonkey. This is a Firefox/Chrome extension that allows you to run javascript on pages. The scripts only load/executed based on rules.
-2. Create a new userscript and paste the contents of `userscript.js` into that. The header in the file will autoconfigure the values.
+2. Create a new userscript and paste the contents of `user-script.js` into that. The header in the file will autoconfigure the values.
 3. You're done
 
 # How does it work
