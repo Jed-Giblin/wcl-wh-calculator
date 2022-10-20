@@ -59,7 +59,7 @@ let signatureLookup = {
     "Shadow Blades": ["rogue/subtlety", 261, 4],
     "Gloomblade": ["rogue/subtlety", 261, 4],
     "Secret Technique": ["rogue/subtlety", 261, 4],
-    "Earth Shock": ["shaman/enhancement", 262, 7],
+    "Earth Shock": ["shaman/elemental", 262, 7],
     "Stormstrike": ["shaman/enhancement", 263, 7],
     "Riptide": ["shaman/restoration", 264, 7],
     "Malefic Rapture": ["warlock/affliction", 265, 9],
@@ -98,7 +98,6 @@ let generateWowheadLink = function () {
         // [ 4, 8, 12...]
         talentIndices.forEach( (index) => {
             // By Default a node is not chosen
-            console.log(tree.talents[index]);
             let pointsAllocated = 0;
             let choiceMade = null;
             let spellName = "";
@@ -118,11 +117,13 @@ let generateWowheadLink = function () {
                     return;
                 }
 
-                if ( node.hasOwnProperty("cannotDecreaseError") && node.cannotDecreaseError > 0 ) {
-                    // The builtIn wow code skips "freeNodes". These are nodes auto assigned to your spec
-                    skip = true;
-                    pointsAllocated = 0;
-                    return;
+                if ( node.hasOwnProperty("cannotDecreaseError") ) {
+                    if ( node.defaultSpecs.indexOf( specTreeId ) >= 0 ) {
+                        // The builtIn wow code skips "freeNodes". These are nodes auto assigned to your spec
+                        skip = false;
+                        pointsAllocated = 0;
+                        return;
+                    }
                 }
 
                 let isSelected = false;
@@ -184,9 +185,6 @@ let generateWowheadLink = function () {
     [classTreeId, specTreeId].forEach( (treeId) => {
         [ WH.nodeTrees[treeId].points, WH.nodeTrees[treeId].choices].forEach( (arr, ii) => {
             let size = Math.ceil( arr.length / 3 );
-            if ( ii == 0 ) {
-                size -= WH.nodeTrees[treeId].skip;
-            }
             dataTable.push( size );
             for ( let i = 0; i < arr.length; i += 3 ) {
                 let val1 = arr[i].val;
@@ -199,12 +197,10 @@ let generateWowheadLink = function () {
                 let val3Note = arr[i + 2] != undefined ? arr[i+2].note : "Unknown";
 
                 let bitValue = val1 << 4 | val2 << 2 | val3;
-                if ( bitValue == 0 ) {
-                    if ( i >= size ) {
+                if ( i >= arr.length ) {
                         return;
-                    }
                 }
-                if ( debug ) {
+                if ( debug && ii == 0) {
                     console.log( `Tuple: [ ${val1} ${val1Note}, ${val2} ${val2Note}, ${val3} ${val3Note}], val: ${bitValue}`);
                 }
                 dataTable.push( bitValue );
