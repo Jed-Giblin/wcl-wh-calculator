@@ -6,30 +6,73 @@
 // @author       Jed Giblin
 // @match        https://www.warcraftlogs.com/reports/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=warcraftlogs.com
-// @resource     whTrees https://nether.wowhead.com/data/talents-dragonflight
+// @resource     raidbotsData https://www.raidbots.com/static/data/beta/new-talent-trees.json
 // @grant         GM_getResourceText
 // @grant         GM_openInTab
-// @grant        GM.xmlHttpRequest
 // ==/UserScript==
 let debug = false;
 
-let talentRenameMasque = function(badName) {
-    let masque = {
-        'Sentinel': 'Sentinel Owl'
-    };
-    return masque[badName] ? masque[badName] : badName;
-}
+class BitTable {
+    constructor() {
+        this.table = [];
+        this.bitBase = 6;
+        this.b64Table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    }
 
-let WH = { points: [], choices: [], nodeTrees: {} }
-WH.setPageData = function(key, value) {
-    WH[ key.split('.')[key.split('.').length -1] ] = value;
-}
+    addValue(bitWidth, value, extra=null) {
+        this.table.push([bitWidth, value, extra]);
+    }
 
+    export() {
+        let totalBits = 0;
+        let currentValue = 0;
+        let currentReservedBits = 0;
+        let exportString = "";
+        this.table.forEach((row) => {
+            if ( debug ) {
+                console.log(`Row values: ${row}`);
+            }
+            let remainingBitWidth = row[0];
+            let remainingValue = row[1];
+            // Increment the totalBits
+            totalBits = totalBits + remainingBitWidth;
+
+            while (remainingBitWidth > 0) {
+                // Calculate the amount of space left in the current char. 6 - reservedBits
+                let spaceInCurrentValue = this.bitBase - currentReservedBits;
+                // Calculate the largest value wee can store by l shifting 1 the amount of space we have
+                let maxStorableValue = 1 << spaceInCurrentValue;
+                // Determine the remainder of our value and our max
+                let remainder = remainingValue % maxStorableValue;
+
+                remainingValue = remainingValue >> spaceInCurrentValue;
+                currentValue = currentValue + (remainder << currentReservedBits);
+                if (spaceInCurrentValue > remainingBitWidth) {
+                    currentReservedBits = (currentReservedBits + remainingBitWidth) % this.bitBase;
+                    remainingBitWidth = 0;
+                } else {
+                    exportString = exportString + this.b64Table[currentValue];
+                    currentValue = 0;
+                    currentReservedBits = 0;
+                    remainingBitWidth = remainingBitWidth - spaceInCurrentValue;
+                }
+            }
+        });
+        if (currentReservedBits > 0) {
+            exportString = exportString + this.b64Table[currentValue];
+        }
+
+        return exportString;
+    }
+
+
+}
+// 'https://nether.wowhead.com/data/talents-dragonflight?locale=0&dataEnv=3&dv=18&db=1665702808')
 let signatureLookup = {
     "Heart Strike": ["death-knight/blood",250,6],
     "Frost Strike": ["death-knight/frost",251,6],
     "Festering Strike": ["death-knight/unholy",252,6],
-    "Fel Devestation": ["demon-hunter/vengence", 581, 12],
+    "Fel Devastation ": ["demon-hunter/vengeance", 581, 12],
     "Eye Beam": ["demon-hunter/havoc", 577, 12],
     "Eclipse": ["druid/balance", 102, 11],
     "Tiger's Fury": ["druid/feral", 103, 11],
@@ -59,7 +102,7 @@ let signatureLookup = {
     "Shadow Blades": ["rogue/subtlety", 261, 4],
     "Gloomblade": ["rogue/subtlety", 261, 4],
     "Secret Technique": ["rogue/subtlety", 261, 4],
-    "Earth Shock": ["shaman/elemental", 262, 7],
+    "Earth Shock": ["shaman/enhancement", 262, 7],
     "Stormstrike": ["shaman/enhancement", 263, 7],
     "Riptide": ["shaman/restoration", 264, 7],
     "Malefic Rapture": ["warlock/affliction", 265, 9],
@@ -70,14 +113,76 @@ let signatureLookup = {
     "Ignore Pain": ["warrior/protection", 73, 1]
 }
 
-let generateWowheadLink = function () {
+
+
+let binaryTraverse = function (bt, listedTalents, matchedTalentDb, nodeOrderList, specFilterId) {
+    nodeOrderList.forEach( (nodeId) => {
+        console.log("Processing row: " + nodeId);
+        let key = `${nodeId}-${specFilterId}`;
+        let nodeInfo = matchedTalentDb.allNodes[key];
+
+        if ( nodeInfo === undefined ||  ( nodeInfo.hasOwnProperty("freeNode") && nodeInfo.freeNode )) {
+            // This node is not for our spec, thus cannot be selected
+            bt.addValue( 1, 0, "isNotInTree " + nodeId);
+            return;
+        }
+
+        let isChoiceNode = nodeInfo.type == "choice";
+        let isSelected = false;
+        let choiceIndex = -1;
+        let allocated = 0;
+        let spell = null;
+        let isPartiallyAllocated = null;
+
+        if (isChoiceNode) {
+            nodeInfo.entries.forEach((entry, index) => {
+                if (listedTalents.hasOwnProperty(entry.name)) {
+                    isSelected = true;
+                    choiceIndex = index;
+                    spell = entry;
+                    allocated = listedTalents[entry.name];
+                }
+            });
+        } else {
+            spell = nodeInfo
+            if ( listedTalents.hasOwnProperty(spell.name) ) {
+                isSelected = true;
+                allocated = listedTalents[spell.name];
+            }
+        }
+
+        // Always set isSelected
+        bt.addValue(1, isSelected ? 1 : 0, "isSelected "+ nodeId);
+        if ( isSelected ) {
+            if ( debug ) {
+                console.log(`isChoiceNode: ${isChoiceNode}, isSelected: ${isSelected}, spellName: ${spell.name}, choiceIndex: ${choiceIndex}, allocated: ${allocated}, ${typeof (allocated)}, maxPoints: ${spell.maxRanks}, spec: ${nodeInfo.specId}`);
+            }
+            let partiallyAllocated = spell.maxRanks != allocated;
+            // Set partiallyAllocated
+            bt.addValue( 1, partiallyAllocated ? 1 : 0, "partiallyAllocated " + nodeId );
+            if ( partiallyAllocated ) {
+                // Because we are partiallyAllocated, set purchasedRanks
+                bt.addValue( 6, allocated, "allocated " + nodeId);
+            }
+            // Set isChoiceNode
+            bt.addValue( 1, isChoiceNode ? 1 : 0, "isChoiceNode " + nodeId);
+            if ( isChoiceNode ) {
+                // Because we are choiceNode, set EntryIndex
+                bt.addValue( 2, choiceIndex, "choiceIndex " + nodeId);
+            }
+        }
+    });
+};
+
+let generateWowheadLink = function (talentDB) {
+    console.log(talentDB);
     let talentWindow = document.getElementById('summary-talents-0');
     let spec = null;
     let specTreeId = null;
     let classTreeId = null;
     let listedTalents = {};
     for (let i = 0, row; row = talentWindow.rows[i]; i++) {
-        let talentName = talentRenameMasque( row.cells[0].textContent.trim() );
+        let talentName = row.cells[0].textContent.trim();
         let allocation = row.cells[1].textContent.trim();
 
         if ( signatureLookup.hasOwnProperty( talentName ) ) {
@@ -88,149 +193,35 @@ let generateWowheadLink = function () {
     if ( debug ) {
         console.log("Found log for class: " + spec );
     }
-    let allNodes = {};
-    // # MM Hunter Example
-    // # [ 3, 254 ]
-    [classTreeId, specTreeId].forEach( (treeId) => {
-        WH.nodeTrees[treeId] = { points: [], choices: [], skip: 0}
-        let tree = WH.trees.find( tree => tree.id == treeId );
-        let talentIndices = Object.keys(tree.talents).map( e => parseInt(e)).sort(((e, t) => e - t));
-        // [ 4, 8, 12...]
-        talentIndices.forEach( (index) => {
-            // By Default a node is not chosen
-            let pointsAllocated = 0;
-            let choiceMade = null;
-            let spellName = "";
-            let skip = false;
-            // [ { node: 0000, spells: [] ]
-            tree.talents[index].forEach( (talentNodeMap) => {
-                let node = talentNodeMap;
-                if ( node.hasOwnProperty("shownForSpecs") && node.shownForSpecs.indexOf( specTreeId ) < 0 ) {
-                    // If we can't resolve a nodeInfo object
-                    // It means that node is for a different spec tree
-                    // e.g. 79935 - Kill Command - BM
-                    //      79839 - Kill Command - Surv
-                    //      79833 - Kill Shot - Surv
-                    //      79835 - Kill Shot - BM
-                    //      79837 - Muzzle - Surv
-                    //      79912 - Counter Shot - BM
-                    return;
-                }
-
-                if ( node.hasOwnProperty("cannotDecreaseError") ) {
-                    if ( node.defaultSpecs.indexOf( specTreeId ) >= 0 ) {
-                        // The builtIn wow code skips "freeNodes". These are nodes auto assigned to your spec
-                        skip = false;
-                        pointsAllocated = 0;
-                        return;
-                    }
-                }
-
-                let isSelected = false;
-                let allocated = -1;
-                let partiallySelected = false;
-                let index = -1;
-                let spell = null;
-                let isChoiceNode = false;
-
-                if ( node.type == 3 ) {
-                    isChoiceNode = true;
-                    // Choice nodes have the needed spell name on one of their entries
-                    talentNodeMap.spells.forEach( (entry, i) => {
-                        if ( listedTalents.hasOwnProperty( entry.name ) ) {
-                            isSelected = true;
-                            spell = entry;
-                            allocated = listedTalents[ entry.name ];
-                            index = i;
-                        }
-                    // IF a choice node is unselected, the spell name will be Choice 1 / Choice 2
-                    });
-                } else {
-                    spell = node.spells[0];
-                    if ( listedTalents.hasOwnProperty( spell.name ) ) {
-                        isSelected = true;
-                        allocated = listedTalents[ spell.name ];
-                    }
-                }
-
-                if ( !spell ) {
-                    spell = node.spells[0];
-                }
-
-                spellName = spell.name;
-
-                if ( isSelected ) {
-                    pointsAllocated = allocated;
-                    if ( isChoiceNode ) {
-                        choiceMade = index;
-                    }
-                }
-            });
-            if ( skip ) {
-                WH.nodeTrees[treeId].skip++;
-                WH.nodeTrees[treeId].points.push( { val: undefined, note: spellName });
-                return;
-            }
-            WH.nodeTrees[treeId].points.push( { val: pointsAllocated, note: spellName });
-            if ( choiceMade != null ) {
-                WH.nodeTrees[treeId].choices.push({ val: choiceMade, note: spellName });
-            }
-
+    let bt = new BitTable();
+    let orderedNodeList = Object.values(talentDB).find( def => def.classId == classTreeId && def.specId == specTreeId ).fullNodeOrder;
+    let matchedTalentDb = { activeSpecId: specTreeId, allNodes: {} };
+    Object.values(talentDB).filter( def => def.classId == classTreeId ).forEach( (tree) => {
+        tree.classNodes.forEach( (node) => {
+            let key = `${node.id}-${tree.specId}`;
+            matchedTalentDb.allNodes[key] = { specId: tree.specId, ...node };
         });
-
-    });
-    const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let whString = "D";
-    let dataTable = [0];
-    [classTreeId, specTreeId].forEach( (treeId) => {
-        [ WH.nodeTrees[treeId].points, WH.nodeTrees[treeId].choices].forEach( (arr, ii) => {
-            let size = Math.ceil( arr.length / 3 );
-            dataTable.push( size );
-            for ( let i = 0; i < arr.length; i += 3 ) {
-                let val1 = arr[i].val;
-                let val1Note = arr[i].note;
-
-                let val2 = arr[i + 1] != undefined ? arr[i + 1].val : 0
-                let val2Note = arr[i + 1] != undefined ? arr[i+1].note : "Unknown";
-
-                let val3 = arr[i + 2] != undefined ? arr[i + 2].val : 0
-                let val3Note = arr[i + 2] != undefined ? arr[i+2].note : "Unknown";
-
-                let bitValue = val1 << 4 | val2 << 2 | val3;
-                if ( i >= arr.length ) {
-                        return;
-                }
-                if ( debug && ii == 0) {
-                    console.log( `Tuple: [ ${val1} ${val1Note}, ${val2} ${val2Note}, ${val3} ${val3Note}], val: ${bitValue}`);
-                }
-                dataTable.push( bitValue );
-            }
+        tree.specNodes.forEach( (node) => {
+            let key = `${node.id}-${tree.specId}`;
+            matchedTalentDb.allNodes[key] = { specId: tree.specId, ...node };
         });
     });
-    for( let i = 0; i < dataTable.length; i++ ) {
-        whString += b64.charAt( dataTable[i] );
+    if ( matchedTalentDb !== null ) {
+        bt.addValue( 8, 1);
+        bt.addValue( 16, specTreeId);
+        let allNodes = {};
+        bt.addValue( 128, 0 );
+        binaryTraverse( bt, listedTalents, matchedTalentDb, orderedNodeList, specTreeId);
+        let exportString = bt.export();
+        let url = `https://www.wowhead.com/beta/talent-calc/blizzard/${exportString}`;
+        GM_openInTab(url, { active: true });
+        navigator.clipboard.writeText(exportString);
     }
-    let url = `https://www.wowhead.com/beta/talent-calc/${spec}/${whString}`;
-    GM_openInTab(url, {active: true});
-    WH.nodeTrees = {};
 }
 
 let fetchTalentDb = function () {
-    // Staticly setting trees for now in source to reduce popups
-    let url = 'https://nether.wowhead.com/data/talents-dragonflight?locale=0&dataEnv=3&dv=18&uu='+new Date();
-    GM.xmlHttpRequest({
-        method: "GET",
-        url: url,
-        onload: function(response) {
-            let remoteScript = document.createElement('script')
-            remoteScript.id = 'tm-dev-script'
-            remoteScript.innerHTML = response.responseText;
-            document.body.appendChild(remoteScript);
-            eval( document.getElementById('tm-dev-script').text );
-            generateWowheadLink();
-        }
-    })
-
+    let data = GM_getResourceText("raidbotsData");
+    generateWowheadLink( JSON.parse(data) );
 };
 
 (function () {
