@@ -4,7 +4,8 @@ A Tampermonkey script that will add a button to link to the wowhead talent calcu
 # Installation
 1. Install Tampermonkey. This is a Firefox/Chrome extension that allows you to run javascript on pages. The scripts only load/executed based on rules.
 2. Create a new userscript and paste the contents of `user-script.js` into that. The header in the file will autoconfigure the values.
-3. You're done
+   * You can get the contents from the release page for "stable" or directly from main. 
+4. You're done
 
 # How does it work
 * When you are on a WCL report with a talents breakdown, a button will appear. 
